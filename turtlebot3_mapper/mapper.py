@@ -13,7 +13,7 @@ class TurtlebotMapper(Node):
                  node_name: str = 'turtlebot_mapper',
                  width: int = 10,
                  height: int = 10,
-                 resolution: float = 0.05):
+                 resolution: float = 0.025):
 
         super(TurtlebotMapper, self).__init__(node_name=node_name)
         self.width = width
@@ -42,7 +42,7 @@ class TurtlebotMapper(Node):
             qos_profile=10,
         )
         self._update_timer = self.create_timer(
-            timer_period_sec=0.01,
+            timer_period_sec=1,
             callback=self._update_callback,
         )
         self._scan_init = False
@@ -54,18 +54,17 @@ class TurtlebotMapper(Node):
         self._scan = message
         self._scan_init = True
 
-        if self._odom_init:
-            self.update(
-                message_laser=self._scan,
-                message_odometry=self._odom,
-            )
-
     def _odom_callback(self, message: Odometry):
         self._odom = message
         self._odom_init = True
 
     def _update_callback(self):
         if self._scan_init and self._odom_init:
+            self.get_logger().info("updating...")
+            self.update(
+                message_laser=self._scan,
+                message_odometry=self._odom,
+            )
             self._map_publisher.publish(self.occupancy_grid)
 
         
@@ -94,7 +93,6 @@ class TurtlebotMapper(Node):
                 y2=xy[i,1],
             )
 
-            print(points.shape)
             for j in range(points.shape[0] - 1):
                 x = points[j,0]
                 y = points[j,1]
