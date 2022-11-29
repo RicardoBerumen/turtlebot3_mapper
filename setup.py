@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'mapper=turtlebot3_mapper.mapper:main',
             'viewer=turtlebot3_mapper.viewer:main',
+            'explorer=turtlebot3_mapper.explorer:main',
         ],
     },
 )
