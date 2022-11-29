@@ -1,4 +1,5 @@
 import rclpy
+import threading
 import numpy as np
 
 from rclpy.node import Node
@@ -6,6 +7,8 @@ from rclpy.executors import ExternalShutdownException
 
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry, OccupancyGrid, MapMetaData
+
+from turtlebot3_mapper.utils import euler_from_quaternion
 
 class TurtlebotMapper(Node):
 
@@ -47,29 +50,36 @@ class TurtlebotMapper(Node):
         )
         self._scan_init = False
         self._odom_init = False
-
+        self._update = threading.Lock()
         self.get_logger().info(f"Init {node_name}")
 
     def _scan_callback(self, message: LaserScan):
-        self._scan = message
         self._scan_init = True
+        if not self._update.locked():
+            self._scan = message
 
     def _odom_callback(self, message: Odometry):
-        self._odom = message
         self._odom_init = True
+        if not self._update.locked():
+            self._odom = message
 
     def _update_callback(self):
         if self._scan_init and self._odom_init:
-            self.get_logger().info("updating...")
-            self.update(
-                message_laser=self._scan,
-                message_odometry=self._odom,
-            )
-            self._map_publisher.publish(self.occupancy_grid)
+            if self._update.locked():
+                return
+            else:
+                self._update.acquire()
+                self.get_logger().info("updating...")
+                self.update(
+                    message_laser=self._scan,
+                    message_odometry=self._odom,
+                )
+                self._map_publisher.publish(self.occupancy_grid)
+                self._update.release()
 
         
     def update(self, message_laser: LaserScan, message_odometry: Odometry):
-        _, _, theta = self.euler_from_quaternion(message_odometry.pose.pose.orientation)
+        _, _, theta = euler_from_quaternion(message_odometry.pose.pose.orientation)
         if theta < 0:
             theta += 2*np.pi
         distances = self.scan_to_distances(message=message_laser)
@@ -144,31 +154,6 @@ class TurtlebotMapper(Node):
         array[:,1] = y + distances[:,0]*np.sin(distances[:,1] + theta)
         return array
 
-    @staticmethod
-    def euler_from_quaternion(quaternion):
-        """
-        Convert quaternion (w in last place) to euler roll, pitch, yaw.
-        quat = [x, y, z, w]
-        
-        Source: https://github.com/ROBOTIS-GIT/turtlebot3/blob/humble-devel/turtlebot3_example
-        """
-        x = quaternion.x
-        y = quaternion.y
-        z = quaternion.z
-        w = quaternion.w
-
-        sinr_cosp = 2 * (w * x + y * z)
-        cosr_cosp = 1 - 2 * (x * x + y * y)
-        roll = np.arctan2(sinr_cosp, cosr_cosp)
-
-        sinp = 2 * (w * y - z * x)
-        pitch = np.arcsin(sinp)
-
-        siny_cosp = 2 * (w * z + x * y)
-        cosy_cosp = 1 - 2 * (y * y + z * z)
-        yaw = np.arctan2(siny_cosp, cosy_cosp)
-
-        return roll, pitch, yaw
 
     @staticmethod
     def numpy_to_occupancy_grid(arr, info=None):
