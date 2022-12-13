@@ -1,12 +1,18 @@
-import rclpy
+
 import threading
+from enum import Enum
+from typing import List
+
+import rclpy
 import numpy as np
 
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.executors import ExternalShutdownException
 
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry, OccupancyGrid, MapMetaData
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 
 from tf2_ros.buffer import Buffer
 from tf2_ros import LookupException, TransformException 
@@ -14,7 +20,26 @@ from tf2_ros.transform_listener import TransformListener
 
 from turtlebot3_mapper.utils import euler_from_quaternion
 
+
+class State(Enum):
+    FREE = 1
+    OCCUPIED = 2
+    UNKOWN = 3
+
+
 class TurtlebotMapper(Node):
+    
+    def parameter_callback(self, parameters: List[Parameter]) -> SetParametersResult:
+        for param in parameters:
+            if param.name == "min_prob":
+                self.min_prob = param.value
+                self.get_logger().info("Updated parameter min_prob=%.2f" % self.min_prob)
+            elif param.name == "max_prob":
+                self.max_prob = param.value
+                self.get_logger().info("Updated parameter max_prob=%.2f" % self.max_prob)
+            else:
+                return SetParametersResult(successful=False)
+        return SetParametersResult(successful=True)
 
     def __init__(self,
                  node_name: str = 'turtlebot_mapper',
@@ -23,13 +48,64 @@ class TurtlebotMapper(Node):
                  resolution: float = 0.03):
 
         super(TurtlebotMapper, self).__init__(node_name=node_name)
-        self.width = width
-        self.height = height
-        self.resolution = resolution
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                (
+                    "width",
+                    8.0,
+                    ParameterDescriptor(description="Map's width"),
+                ),
+                (
+                    "height",
+                    8.0,
+                    ParameterDescriptor(description="Map's height"),
+                ),
+                (
+                    "resolution",
+                    0.03,
+                    ParameterDescriptor(description="Map's resolution"),
+                ),
+                (
+                    "min_prob",
+                    0.01,
+                    ParameterDescriptor(description="Map's min probability value"),
+                ),
+                (
+                    "max_prob",
+                    0.99,
+                    ParameterDescriptor(description="Map's max probability value"),
+                ),
+                (
+                    "prob_occupied",
+                    0.6,
+                    ParameterDescriptor(description="Occupied probability increment"),
+                ),
+                (
+                    "prob_free",
+                    0.4,
+                    ParameterDescriptor(description="Free probability increment"),
+                ),
+                (
+                    "prob_priori",
+                    0.5,
+                    ParameterDescriptor(description="Priori probability increment"),
+                ),
+            ],
+        )
+        self.width = float(self.get_parameter("width").value)
+        self.height = float(self.get_parameter("height").value)
+        self.resolution = float(self.get_parameter("resolution").value)
+        self.min_prob = float(self.get_parameter("min_prob").value)
+        self.max_prob = float(self.get_parameter("max_prob").value)
+        self.prob_occupied = float(self.get_parameter("prob_occupied").value)
+        self.prob_free = float(self.get_parameter("prob_free").value)
+        self.prob_priori = float(self.get_parameter("prob_priori").value)
+        self.add_on_set_parameters_callback(self.parameter_callback)
 
         N = int(1/resolution)
         shape = (width*N, height*N)
-        self.grid = -1*np.ones(shape, dtype=np.int8)
+        self.grid = self.prob_priori*np.ones(shape, dtype=float)
 
         self._scan_subscriber = self.create_subscription(
             msg_type=LaserScan,
@@ -43,7 +119,7 @@ class TurtlebotMapper(Node):
             qos_profile=10,
         )
         self._update_timer = self.create_timer(
-            timer_period_sec=0.1,
+            timer_period_sec=0.5,
             callback=self._update_callback,
         )
         self._scan_init = False
@@ -70,7 +146,6 @@ class TurtlebotMapper(Node):
                 self._map_publisher.publish(self.occupancy_grid)
                 self._update.release()
 
-        
     def update(self, message_laser: LaserScan):
         try:
             tf = self._tf_buffer.lookup_transform('odom',
@@ -103,29 +178,56 @@ class TurtlebotMapper(Node):
                 x2=xy[i,0],
                 y2=xy[i,1],
             )
-
             for j in range(points.shape[0] - 1):
                 x = points[j,0]
                 y = points[j,1]
-                if self.grid[y, x] == 100:
-                    continue
-                self.grid[y, x] = 0
-
+                self.update_cell(x=x, y=y, state=State.FREE)
             x = xy[i,0]
             y = xy[i,1]
             if distances[i,0] < message_laser.range_max:
-                self.grid[y, x] = 100
-                self.grid[y+1, x] = 100
-                self.grid[y-1, x] = 100
-                self.grid[y, x-1] = 100
-                self.grid[y, x+1] = 100
+                self.update_cell(x=x, y=y, state=State.OCCUPIED)
+                self.update_cell(x=x-1, y=y, state=State.OCCUPIED)
+                self.update_cell(x=x+1, y=y, state=State.OCCUPIED)
+                self.update_cell(x=x, y=y+1, state=State.OCCUPIED)
+                self.update_cell(x=x, y=y-1, state=State.OCCUPIED)
+
             else:
-                if self.grid[y, x] != 100:
-                    self.grid[y, x] = 0
+                self.update_cell(x=x, y=y, state=State.FREE)
+
+    def update_cell(self, x: int, y: int, state: State):
+        if state == State.FREE:
+            log_prob = self.log_odd(probability=self.prob_free)
+        elif state == State.OCCUPIED:
+            log_prob = self.log_odd(probability=self.prob_occupied)
+        else:
+            log_prob = self.log_odd(probability=self.prob_priori)        
+        current_prob = self.grid[x,y]
+        current_prob_log_odd = self.log_odd(probability=current_prob)
+        current_prob_log_odd += log_prob
+        new_prob = self.probability(log_odd=current_prob_log_odd)
+        if new_prob < self.min_prob:
+            new_prob = self.min_prob
+        elif new_prob > self.max_prob:
+            new_prob = self.max_prob
+        self.grid[x,y] = new_prob
+
+    @staticmethod
+    def log_odd(probability: float) -> float:
+        return np.log(probability/(1.0 - probability))
+
+    @staticmethod
+    def probability(log_odd: float) -> float:
+        result = 1.0/(1+np.exp(-log_odd))
+        if np.isnan(result):
+            result = 0.0
+        return result
     
     @property
     def occupancy_grid(self):
-        return self.numpy_to_occupancy_grid(arr=self.grid)
+        grid = np.zeros_like(self.grid)
+        grid[:,:] = self.grid[:,:]*100
+        grid = grid.astype("int8")
+        return self.numpy_to_occupancy_grid(arr=grid)
 
     @staticmethod
     def scan_to_distances(message: LaserScan) -> np.ndarray:
@@ -140,9 +242,7 @@ class TurtlebotMapper(Node):
                 distance = message.range_min
             else:
                 distance = message.ranges[i]
-            # distances in [m]
             array[i,0] = distance
-            # angles in [radians]
             array[i,1] = angle
         return array
 
@@ -157,7 +257,7 @@ class TurtlebotMapper(Node):
 
 
     @staticmethod
-    def numpy_to_occupancy_grid(arr, info=None):
+    def numpy_to_occupancy_grid(arr: np.ndarray, info=None):
         """
         Source: http://docs.ros.org/en/jade/api/ros_numpy/html/occupancy__grid_8py_source.html
         """
@@ -167,7 +267,6 @@ class TurtlebotMapper(Node):
             raise TypeError('Array must be of int8s')
         grid = OccupancyGrid()
         if isinstance(arr, np.ma.MaskedArray):
-            # We assume that the masked value are already -1, for speed
             arr = arr.data
         grid.data = arr.ravel().tolist()
         grid.info = info or MapMetaData()
@@ -221,7 +320,6 @@ class TurtlebotMapper(Node):
         if swapped:
             points.reverse()
         return np.array(points)
-
 
 
 def main(*args, **kwargs):
