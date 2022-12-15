@@ -18,12 +18,11 @@ class State(Enum):
     ROTATE = 2
     UNKOWN = 3
 
-class TurtlebotExplorer(Node):
 
+class Turtlebot3Explorer(Node):
 
     def __init__(self, node_name: str = 'turtlebot_explorer'):
-        super(TurtlebotExplorer,
-              self).__init__(node_name=node_name)
+        super(Turtlebot3Explorer, self).__init__(node_name=node_name)
         self._subscriber_scan = self.create_subscription(
             msg_type=LaserScan,
             topic="/scan",
@@ -82,15 +81,15 @@ class TurtlebotExplorer(Node):
 
         _, _, theta = euler_from_quaternion(self._odom.pose.pose.orientation)
 
-        min_ang = (-140) * (np.pi/180)
-        max_ang = (140) * (np.pi/180)
+        min_ang = (-140) * (np.pi / 180)
+        max_ang = (140) * (np.pi / 180)
 
         increm = self._scan.angle_increment
         size = len(self._scan.ranges)
 
-        start = int(size/2 + min_ang/increm)
-        end = int(size/2 + max_ang/increm)
-        
+        start = int(size / 2 + min_ang / increm)
+        end = int(size / 2 + max_ang / increm)
+
         # scan_range = [self.scan.ranges[i] for i in range(90, 270)]
         scan_range = [self._scan.ranges[i] for i in range(end, len(self._scan.ranges))]
         for i in range(0, start):
@@ -103,7 +102,7 @@ class TurtlebotExplorer(Node):
                 if self.state != State.ROTATE:
                     twist = Twist()
                     twist.linear.x = 0.0
-                    twist.angular.z = 0.25*self.multiplier
+                    twist.angular.z = 0.25 * self.multiplier
                     if self.count >= 3:
                         self.count = 0
                         self.multiplier *= -1.0
@@ -122,7 +121,7 @@ class TurtlebotExplorer(Node):
                 if self.state != State.ROTATE:
                     twist = Twist()
                     twist.linear.x = 0.0
-                    twist.angular.z = 0.25*self.multiplier
+                    twist.angular.z = 0.25 * self.multiplier
                     if self.count >= 3:
                         self.count = 0
                         self.multiplier *= -1.0
@@ -145,19 +144,3 @@ class TurtlebotExplorer(Node):
                 twist.angular.z = 0.0
                 self.state = State.FORWARD
                 self._publisher.publish(twist)
-
-
-def main(*args, **kwargs):
-    rclpy.init(*args, **kwargs)
-    node = TurtlebotExplorer()
-    try:
-        rclpy.spin(node=node)
-    except (KeyboardInterrupt, ExternalShutdownException):
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.try_shutdown()
-
-
-if __name__ == "__main__":
-    main()
