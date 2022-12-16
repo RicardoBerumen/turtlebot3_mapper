@@ -13,6 +13,7 @@ setup(
         path.join(package_name, "turtlebot3_occupancy_grid"),
         path.join(package_name, "turtlebot3_object_detector"),
         path.join(package_name, "turtlebot3_mission_controller"),
+        path.join(package_name, "turtlebot3_mission_client"),
     ],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -47,6 +48,8 @@ setup(
                 turtlebot3_mapper.turtlebot3_object_detector.main:main',
             'turtlebot3_mission_controller = \
                 turtlebot3_mapper.turtlebot3_mission_controller.main:main',
+            'turtlebot3_mission_client = \
+                turtlebot3_mapper.turtlebot3_mission_client.main:main',
         ],
     },
 )

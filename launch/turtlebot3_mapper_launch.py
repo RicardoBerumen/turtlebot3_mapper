@@ -131,10 +131,22 @@ def generate_launch_description():
             },
         ],
     )
+    turtlebot3_mission_controller_node = Node(
+        package='turtlebot3_mapper',
+        namespace='',
+        executable='turtlebot3_mission_controller',
+        name='turtlebot3_mission_controller',
+        parameters=[
+            {
+                "free_limit": 30,
+            },
+        ],
+    )
     ld = LaunchDescription()
     ld.add_action(rviz_cmd)
     ld.add_action(turtlebot3_world_cmd)
     ld.add_action(turtlebot3_explorer_node)
     ld.add_action(turtlebot3_occupancy_grid_node)
     ld.add_action(turtlebot3_object_detector_node)
+    ld.add_action(turtlebot3_mission_controller_node)
     return ld
