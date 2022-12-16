@@ -12,6 +12,8 @@ from nav_msgs.msg import OccupancyGrid
 from vision_msgs.msg import BoundingBox2DArray, BoundingBox2D
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 
+from turtlebot3_mapper.utils import occupancy_grid_to_numpy
+
 
 class Turtlebot3ObjectDetector(Node):
 
@@ -25,10 +27,10 @@ class Turtlebot3ObjectDetector(Node):
                 self.get_logger().info("Updated parameter connectivity=%.2f" % self.connectivity)
             elif param.name == "min_area":
                 self.min_area = param.value
-                self.get_logger().info("Updated parameter connectivity=%.2f" % self.min_area)
+                self.get_logger().info("Updated parameter min_area=%.2f" % self.min_area)
             elif param.name == "max_area":
                 self.max_area = param.value
-                self.get_logger().info("Updated parameter connectivity=%.2f" % self.max_area)
+                self.get_logger().info("Updated parameter max_area=%.2f" % self.max_area)
             else:
                 return SetParametersResult(successful=False)
         return SetParametersResult(successful=True)
@@ -88,7 +90,7 @@ class Turtlebot3ObjectDetector(Node):
 
     def _map_callback(self, message: OccupancyGrid):
         # get occupancy grid as a numpy array int8
-        array = self.occupancygrid_to_numpy(message)
+        array = occupancy_grid_to_numpy(message)
         # convert int8 array to float32
         input = array.astype("float32")
         # remap to 0-255 interval
@@ -128,11 +130,3 @@ class Turtlebot3ObjectDetector(Node):
         image_ros = self._bridge.cv2_to_imgmsg(cvim=np.flip(output, axis=0))
         image_ros.header = message.header
         self._result_publisher.publish(image_ros)
-
-    @staticmethod
-    def occupancygrid_to_numpy(msg, info=None):
-        """
-        Source: http://docs.ros.org/en/jade/api/ros_numpy/html/occupancy__grid_8py_source.html
-        """
-        data = np.asarray(msg.data, dtype=np.int8).reshape(msg.info.height, msg.info.width)
-        return data
