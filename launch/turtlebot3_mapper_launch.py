@@ -107,6 +107,29 @@ def generate_launch_description():
         namespace='',
         executable='turtlebot3_explorer',
         name='turtlebot3_explorer',
+        parameters=[
+            {
+                "view_angle": 30.0,
+            },
+            {
+                "min_rand": 10,
+            },
+            {
+                "max_rand": 20,
+            },
+            {
+                "safety_distance": 0.5,
+            },
+            {
+                "linear_speed": 0.15,
+            },
+            {
+                "angular_speed": 0.25,
+            },
+            {
+                "update_rate": 0.5,
+            },
+        ],
     )
     ld = LaunchDescription()
     ld.add_action(rviz_cmd)

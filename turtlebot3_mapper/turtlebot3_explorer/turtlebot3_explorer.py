@@ -1,38 +1,115 @@
-import rclpy
-import threading
+import random
+from enum import Enum
+from typing import List
+
 import numpy as np
 
-from enum import Enum
 from rclpy.node import Node
-from rclpy.executors import ExternalShutdownException
+from rclpy.parameter import Parameter
 
-from nav_msgs.msg import Odometry
+from std_srvs.srv import SetBool
+
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 
-from turtlebot3_mapper.utils import euler_from_quaternion
+from tf2_ros.buffer import Buffer
+from tf2_ros import LookupException, TransformException
+from tf2_ros.transform_listener import TransformListener
+
+from turtlebot3_mapper.utils import (
+    euler_from_quaternion,
+    laser_scan_to_polar,
+)
 
 
 class State(Enum):
     FORWARD = 1
     ROTATE = 2
-    UNKOWN = 3
+    STOP = 3
+    UNKOWN = 4
 
 
 class Turtlebot3Explorer(Node):
 
+    def parameter_callback(self, parameters: List[Parameter]) -> SetParametersResult:
+        for param in parameters:
+            if param.name == "view_angle":
+                self.view_angle = param.value
+                self.get_logger().info("Updated parameter view_angle=%.2f" % self.view_angle)
+            elif param.name == "min_rand":
+                self.min_rand = param.value
+                self.get_logger().info("Updated parameter min_rand=%.2f" % self.min_rand)
+            elif param.name == "max_rand":
+                self.max_rand = param.value
+                self.get_logger().info("Updated parameter max_rand=%.2f" % self.max_rand)
+            elif param.name == "safety_distance":
+                self.safety_distance = param.value
+                self.get_logger().info("Updated parameter safety_distance=%.2f" %
+                                       self.safety_distance)
+            elif param.name == "linear_speed":
+                self.linear_speed = param.value
+                self.get_logger().info("Updated parameter linear_speed=%.2f" % self.linear_speed)
+            elif param.name == "angular_speed":
+                self.angular_speed = param.value
+                self.get_logger().info("Updated parameter angular_speed=%.2f" % self.angular_speed)
+            else:
+                return SetParametersResult(successful=False)
+        return SetParametersResult(successful=True)
+
     def __init__(self, node_name: str = 'turtlebot_explorer'):
         super(Turtlebot3Explorer, self).__init__(node_name=node_name)
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                (
+                    "view_angle",
+                    30.0,
+                    ParameterDescriptor(description="View angle"),
+                ),
+                (
+                    "min_rand",
+                    1,
+                    ParameterDescriptor(description="Min range random limit"),
+                ),
+                (
+                    "max_rand",
+                    10,
+                    ParameterDescriptor(description="Max range random limit"),
+                ),
+                (
+                    "safety_distance",
+                    0.5,
+                    ParameterDescriptor(description="Safety distance"),
+                ),
+                (
+                    "linear_speed",
+                    0.15,
+                    ParameterDescriptor(description="Linear speed"),
+                ),
+                (
+                    "angular_speed",
+                    0.15,
+                    ParameterDescriptor(description="Angular speed"),
+                ),
+                (
+                    "update_rate",
+                    0.5,
+                    ParameterDescriptor(description="Update rate"),
+                ),
+            ],
+        )
+        self.view_angle = float(self.get_parameter("view_angle").value)
+        self.min_rand = float(self.get_parameter("min_rand").value)
+        self.max_rand = float(self.get_parameter("max_rand").value)
+        self.safety_distance = float(self.get_parameter("safety_distance").value)
+        self.linear_speed = float(self.get_parameter("linear_speed").value)
+        self.angular_speed = float(self.get_parameter("angular_speed").value)
+        self.add_on_set_parameters_callback(self.parameter_callback)
         self._subscriber_scan = self.create_subscription(
             msg_type=LaserScan,
             topic="/scan",
             callback=self._scan_callback,
-            qos_profile=10,
-        )
-        self._subscriber_odom = self.create_subscription(
-            msg_type=Odometry,
-            topic="/odom",
-            callback=self._odom_callback,
             qos_profile=10,
         )
         self._publisher = self.create_publisher(
@@ -41,106 +118,106 @@ class Turtlebot3Explorer(Node):
             qos_profile=10,
         )
         self.update_timer = self.create_timer(
-            timer_period_sec=1,
-            callback=self.update_callback,
+            timer_period_sec=(1 / self.get_parameter("update_rate").value),
+            callback=self._update_callback,
         )
-        self.view_angle = 90
-        self._odom_init = False
+        self.srv = self.create_service(
+            SetBool,
+            'enable',
+            self._enable_callback,
+        )
         self._scan_init = False
+
         self.count = 0
         self.multiplier = 1.0
-        self._update = threading.Lock()
+        self.limit = random.randint(self.min_rand, self.max_rand)
 
         self.state = State.UNKOWN
-        self.get_logger().info("Init turtlebot_explorer")
+        self.enable = False
+
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
+        self.get_logger().info("Init {}".format(node_name))
+
+    def _enable_callback(self, request, response):
+        self.enable = request.data
+        response.success = True
+        response.message = "Configured"
+        return response
 
     def _scan_callback(self, message: LaserScan):
-        if not self._update.locked():
-            self._scan = message
+        self._scan = message
         self._scan_init = True
 
-    def _odom_callback(self, message: Odometry):
-        self._odom = message
-        if not self._update.locked():
-            self._odom = message
-        self._odom_init = True
+    def _update_callback(self):
+        if self._scan_init:
+            self.get_logger().info("updating...")
+            self.detect_obstacle()
 
-    def update_callback(self):
-        if self._scan_init and self._odom_init:
-            if self._update.locked():
-                return
-            else:
-                self._update.acquire()
-                self.get_logger().info("updating...")
-                self.detect_obstacle()
-                self._update.release()
+    def set_robot(self, state: State):
+        twist = Twist()
+        twist.linear.y = 0.0
+        twist.linear.z = 0.0
+        twist.angular.x = 0.0
+        twist.angular.y = 0.0
+        if state == State.STOP:
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self._publisher.publish(twist)
+        elif state == State.FORWARD:
+            twist.linear.x = self.linear_speed
+            twist.angular.z = 0.0
+            self._publisher.publish(twist)
+        elif state == State.ROTATE:
+            twist.linear.x = 0.0
+            twist.angular.z = self.angular_speed * self.multiplier
+            self.count += 1
+            if self.count >= self.limit:
+                self.limit = random.randint(self.min_rand, self.max_rand)
+                self.count = 0
+                self.multiplier *= -1.0
+            self._publisher.publish(twist)
 
     def detect_obstacle(self):
-        # unit: m
-        safety_distance = 0.5
+        scan = self._scan
+        try:
+            trans = self._tf_buffer.lookup_transform(scan.header.frame_id, "base_link",
+                                                     scan.header.stamp)
+        except (TransformException, LookupException) as ex:
+            self.get_logger().warn(f'Could not transform "odom" to {scan.header.frame_id}: {ex}')
+            return
 
-        _, _, theta = euler_from_quaternion(self._odom.pose.pose.orientation)
+        _, _, theta = euler_from_quaternion(trans.transform.rotation)
+        min_angle = (-self.view_angle + theta) * (np.pi / 180) + (2 * np.pi)
+        max_angle = (self.view_angle + theta) * (np.pi / 180)
 
-        min_ang = (-140) * (np.pi / 180)
-        max_ang = (140) * (np.pi / 180)
+        polar = laser_scan_to_polar(message=scan)
+        mask = (polar[:, 1] >= (min_angle)) | (polar[:, 1] <= max_angle)
+        distance_range = polar[mask, :]
 
-        increm = self._scan.angle_increment
-        size = len(self._scan.ranges)
+        obstacle_distance = np.min(distance_range[:, 0])
+        self.get_logger().info("Closest obstacle={}".format(obstacle_distance))
 
-        start = int(size / 2 + min_ang / increm)
-        end = int(size / 2 + max_ang / increm)
-
-        # scan_range = [self.scan.ranges[i] for i in range(90, 270)]
-        scan_range = [self._scan.ranges[i] for i in range(end, len(self._scan.ranges))]
-        for i in range(0, start):
-            scan_range.append(self._scan.ranges[i])
-
-        obstacle_distance = min(scan_range)
-
-        if self.state == State.UNKOWN:
-            if obstacle_distance < safety_distance:
-                if self.state != State.ROTATE:
-                    twist = Twist()
-                    twist.linear.x = 0.0
-                    twist.angular.z = 0.25 * self.multiplier
-                    if self.count >= 3:
-                        self.count = 0
-                        self.multiplier *= -1.0
-                    self.count += 1
-                    self.state = State.ROTATE
-                    self._publisher.publish(twist)
-            else:
-                self.state = State.FORWARD
-                twist = Twist()
-                twist.linear.x = 0.25
-                twist.angular.z = 0.0
-                self._publisher.publish(twist)
-
-        elif self.state == State.FORWARD:
-            if obstacle_distance < safety_distance:
-                if self.state != State.ROTATE:
-                    twist = Twist()
-                    twist.linear.x = 0.0
-                    twist.angular.z = 0.25 * self.multiplier
-                    if self.count >= 3:
-                        self.count = 0
-                        self.multiplier *= -1.0
-                    self.count += 1
-                    self.state = State.ROTATE
-                    self._publisher.publish(twist)
-            else:
-                twist = Twist()
-                twist.linear.x = 0.25
-                twist.angular.z = 0.0
-                self.state = State.FORWARD
-                self._publisher.publish(twist)
-
+        if not self.enable:
+            if self.state != State.STOP:
+                self.state = State.STOP
+                self.set_robot(state=self.state)
         else:
-            if obstacle_distance < safety_distance:
-                pass
-            else:
-                twist = Twist()
-                twist.linear.x = 0.25
-                twist.angular.z = 0.0
-                self.state = State.FORWARD
-                self._publisher.publish(twist)
+            if self.state == State.UNKOWN or self.state == State.STOP:
+                if obstacle_distance < self.safety_distance:
+                    self.state = State.ROTATE
+                    self.set_robot(state=self.state)
+                else:
+                    self.state = State.FORWARD
+                    self.set_robot(state=self.state)
+            elif self.state == State.FORWARD:
+                if obstacle_distance < self.safety_distance:
+                    self.state = State.ROTATE
+                    self.set_robot(state=self.state)
+                else:
+                    self.state = State.FORWARD
+                    self.set_robot(state=self.state)
+            elif self.state == State.ROTATE:
+                if obstacle_distance > self.safety_distance:
+                    self.state = State.FORWARD
+                    self.set_robot(state=self.state)
