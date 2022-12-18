@@ -24,19 +24,19 @@ setup(
     install_requires=['setuptools'],
     zip_safe=True,
     author=["Luiz Carlos Cosmi Filho"],
-    author_email=["luiz.cosmi@edu.ufes.br"],
+    author_email=["luizcarloscosmifilho@gmail.com"],
     maintainer="Luiz Carlos Cosmi Filho",
-    maintainer_email="luiz.cosmi@edu.ufes.br",
+    maintainer_email="luizcarloscosmifilho@gmail.com",
     keywords=['ROS', 'ROS2', 'mapping', 'perception', 'kinematics'],
     classifiers=[
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: MIT Software License',
+        'License :: OSI Approved :: Apache Software License',
         'Programming Language :: Python',
         'Topic :: Software Development',
     ],
     description='Set of packages developed to explore, map and detect obstacles in an \
         enviromment',
-    license='MIT',
+    license='Apache License, Version 2.0',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
