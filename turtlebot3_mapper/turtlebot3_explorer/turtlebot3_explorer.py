@@ -26,6 +26,7 @@ from std_srvs.srv import SetBool
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
+from rclpy.qos import QoSPresetProfiles
 
 from tf2_ros.buffer import Buffer
 from tf2_ros import LookupException, TransformException
@@ -77,37 +78,36 @@ class Turtlebot3Explorer(Node):
             namespace="",
             parameters=[
                 (
-                    "view_angle",
+                    "view_angle", #Ángulo de visión del robot para detectar obstáculos.
                     30.0,
                     ParameterDescriptor(description="View angle"),
                 ),
                 (
-                    "min_rand",
-                    1,
+                    "min_rand", #Define el tiempo aleatorio minimo durante el cual el robot cambia de dirección mientras explora
                     ParameterDescriptor(description="Min range random limit"),
                 ),
                 (
-                    "max_rand",
+                    "max_rand", #Define el tiempo aleatorio maximo durante el cual el robot cambia de dirección mientras explora
                     10,
                     ParameterDescriptor(description="Max range random limit"),
                 ),
                 (
-                    "safety_distance",
-                    0.5,
+                    "safety_distance", #Mínima distancia segura ante obstáculos.
+                    0.6,
                     ParameterDescriptor(description="Safety distance"),
                 ),
                 (
-                    "linear_speed",
+                    "linear_speed", #Velocidad de movimiento 
                     0.15,
                     ParameterDescriptor(description="Linear speed"),
                 ),
                 (
-                    "angular_speed",
+                    "angular_speed", #Rotación del robot
                     0.15,
                     ParameterDescriptor(description="Angular speed"),
                 ),
                 (
-                    "update_rate",
+                    "update_rate", #Frecuencia de actualización del control
                     0.5,
                     ParameterDescriptor(description="Update rate"),
                 ),
@@ -124,7 +124,7 @@ class Turtlebot3Explorer(Node):
             msg_type=LaserScan,
             topic="/scan",
             callback=self._scan_callback,
-            qos_profile=10,
+            qos_profile=QoSPresetProfiles.SENSOR_DATA.value,
         )
         self._publisher = self.create_publisher(
             msg_type=Twist,
@@ -160,8 +160,14 @@ class Turtlebot3Explorer(Node):
         return response
 
     def _scan_callback(self, message: LaserScan):
+        
         self._scan = message
         self._scan_init = True
+
+        max_range = message.range_max
+        ranges = np.array(message.ranges)
+        ranges[np.isnan(ranges)] = max_range
+        message.ranges = ranges.tolist()  # Asignar los valores corregidos al mensaje
 
     def _update_callback(self):
         if self._scan_init:

@@ -29,6 +29,7 @@ def generate_launch_description():
         get_package_share_directory('turtlebot3_mapper'),
         'rviz',
     )
+    #use_sim_time = LaunchConfiguration('use_sim_time', default='false')
     turtlebot3_gazebo_launch_dir = os.path.join(
         get_package_share_directory('turtlebot3_gazebo'),
         'launch',
@@ -48,7 +49,7 @@ def generate_launch_description():
             'y_pose': y_pose,
             'use_sim_time': use_sim_time,
         }.items(),
-    )
+    ) 
     nav2_launch_file_dir = os.path.join(get_package_share_directory('nav2_bringup'), 'launch')
     rviz_config_file = LaunchConfiguration(
         'rviz_config_file',
@@ -71,10 +72,10 @@ def generate_launch_description():
         name='turtlebot3_occupancy_grid',
         parameters=[
             {
-                "width": 8.0
+                "width": 5.0
             },
             {
-                "height": 8.0
+                "height": 5.0
             },
             {
                 "resolution": 0.03,
@@ -103,16 +104,16 @@ def generate_launch_description():
         name='turtlebot3_object_detector',
         parameters=[
             {
-                "threshold": 150,
+                "threshold": 150, #Umbral de detección de objetos
             },
             {
-                "min_area": 30,
+                "min_area": 20, #Area minima que debe tener un objeto para ser considerado en la deteccion.
             },
             {
-                "max_area": 100,
+                "max_area": 100, #Area maxima que debe tener un objeto para ser considerado en la deteccion
             },
             {
-                "connectivity": 4,
+                "connectivity": 4, #conectividad para definir qué pixeles o celdas estan conectados entre si y forman un objeto
             },
         ],
     )
@@ -135,10 +136,10 @@ def generate_launch_description():
                 "safety_distance": 0.5,
             },
             {
-                "linear_speed": 0.15,
+                "linear_speed": 0.1,
             },
             {
-                "angular_speed": 0.25,
+                "angular_speed": 0.15,
             },
             {
                 "update_rate": 0.5,
@@ -158,7 +159,7 @@ def generate_launch_description():
     )
     ld = LaunchDescription()
     ld.add_action(rviz_cmd)
-    ld.add_action(turtlebot3_world_cmd)
+    #ld.add_action(turtlebot3_world_cmd)
     ld.add_action(turtlebot3_explorer_node)
     ld.add_action(turtlebot3_occupancy_grid_node)
     ld.add_action(turtlebot3_object_detector_node)
